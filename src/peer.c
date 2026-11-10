@@ -166,6 +166,16 @@ void* server_thread()
     return NULL;
 }
 
+void get_signature(char* password, int password_len, char* salt, hashdata_t* hash) {
+    char combined[password_len + SALT_LEN + 1];
+
+    memcpy(combined, password, password_len);
+    memcpy(combined + password_len, salt, SALT_LEN); // + password_len to avoid it being overwritten
+
+    // combined[password_len + SALT_LEN] = '\0';
+
+    get_data_sha(combined, *hash, password_len + SALT_LEN, SHA256_HASH_SIZE);
+};
 
 int main(int argc, char **argv)
 {
@@ -193,7 +203,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    char password[PASSWORD_LEN];
+    char password[PASSWORD_LEN + 1]; // added + 1 for \0
     fprintf(stdout, "Create a password to proceed: ");
     scanf("%16s", password);
 
@@ -213,7 +223,11 @@ int main(int argc, char **argv)
     1: Setting Up
     After determining our salt but before saving our address we should probably
     work out what our signature should be. 
-    */
+    */     
+    hashdata_t* signature = (hashdata_t*)malloc(sizeof(hashdata_t));   
+    get_signature(password, PASSWORD_LEN, my_address->salt, signature);
+    memcpy(my_address->signature, signature, SHA256_HASH_SIZE);
+    free(signature);
 
     // Start our record of the network by recording our own address. Make sure
     // any time we update this array we also update the peer_count.

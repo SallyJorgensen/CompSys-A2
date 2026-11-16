@@ -75,6 +75,8 @@ void send_message(Address_t peer_address, int command,
  * retrieve. This file request will be sent to a random peer on the network.
  * This request/retrieve interaction is then repeated forever.
  */ 
+
+ 
 void* client_thread()
 {
     char peer_ip[IP_LEN];
@@ -106,7 +108,7 @@ void* client_thread()
     Here you should probably send a first register message using the 
     send_message function.
     */
-
+    send_message(peer_address, 1, NULL, 0);
     // You should never see this printed in your finished implementation
     printf("Client thread done\n");
 
@@ -175,7 +177,7 @@ void get_signature(char* password, int password_len, char* salt, hashdata_t* has
     // combined[password_len + SALT_LEN] = '\0';
 
     get_data_sha(combined, *hash, password_len + SALT_LEN, SHA256_HASH_SIZE);
-};
+}
 
 int main(int argc, char **argv)
 {

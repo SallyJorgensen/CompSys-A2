@@ -64,7 +64,9 @@ void send_message(Address_t peer_address, int command,
     */
 
     char reply_header[REPLY_HEADER_LEN];
-
+    char reply_body[MAX_MSG_LEN];
+    
+    // reading header
     compsys_helper_readnb(&state, reply_header, REPLY_HEADER_LEN);
     uint32_t reply_length = ntohl(*(uint32_t*)&reply_header[0]);
     uint32_t reply_status = ntohl(*(uint32_t*)&reply_header[4]);
@@ -72,7 +74,7 @@ void send_message(Address_t peer_address, int command,
     uint32_t block_count = ntohl(*(uint32_t*)&reply_header[12]);
 
     hashdata_t block_hash;
-    // bruger memcpy fordi uint32_t kun grapper 4 byets (tror jeg)
+    // bruger memcpy fordi uint32_t kun grapper 4 bytes (tror jeg)
     // SHA256_HASH_SIZE er vidst 32 bytes som er det vi har brug for
     memcpy(block_hash, &reply_header[16], SHA256_HASH_SIZE);
 
@@ -82,6 +84,16 @@ void send_message(Address_t peer_address, int command,
     // for testing
     printf("length=%u status=%u block=%u count=%u\n",
        reply_length, reply_status, block_number, block_count);
+
+
+    // reading body
+    hashdata_t body_hash;
+    compsys_helper_readnb(&state, reply_body, reply_length);
+    get_data_sha(reply_body, body_hash, reply_length, SHA256_HASH_SIZE);
+
+    if (memcmp(body_hash, block_hash, SHA256_HASH_SIZE) != 0) {
+        fprintf(stderr, "Hash mismatch\n");
+    }
 
     close(peer_socket);
 }

@@ -95,6 +95,19 @@ void send_message(Address_t peer_address, int command,
         fprintf(stderr, "Hash mismatch\n");
     }
 
+    int count = reply_length / PEER_ADDR_LEN;
+
+    for (int i = 0; i < count; i++) {
+        Address_t *peer = malloc(sizeof(Address_t));
+        
+        memcpy(peer, reply_body + (i * PEER_ADDR_LEN), PEER_ADDR_LEN);
+
+
+        network[peer_count] = peer;
+        peer_count++;
+    };
+    
+
     close(peer_socket);
 }
 

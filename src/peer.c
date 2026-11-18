@@ -181,7 +181,45 @@ void* handle_server_request_thread(void *vargp)
     */
     char request_header[REQUEST_HEADER_LEN];
     char request_body[MAX_MSG_LEN];
-    compsys_helper_readnb()
+    
+    // reading header
+    compsys_helper_readnb(&state, request_header, REQUEST_HEADER_LEN);
+    uint32_t request_length = ntohl(*(uint32_t*)&request_header[0]);
+    uint32_t request_status = ntohl(*(uint32_t*)&request_header[4]);
+    uint32_t block_number = ntohl(*(uint32_t*)&request_header[8]);
+    uint32_t block_count = ntohl(*(uint32_t*)&request_header[12]);
+
+    hashdata_t block_hash;
+    memcpy(block_hash, &request_header[16], SHA256_HASH_SIZE);
+
+    hashdata_t total_hash;
+    memcpy(total_hash, &request_header[48], SHA256_HASH_SIZE);
+    
+    // for testing
+    printf("length=%u status=%u block=%u count=%u\n",
+       request_length, request_status, block_number, block_count);
+
+
+    // reading body
+    hashdata_t body_hash;
+    compsys_helper_readnb(&state, request_body, request_length);
+    get_data_sha(request_body, body_hash, request_length, SHA256_HASH_SIZE);
+
+    if (memcmp(body_hash, block_hash, SHA256_HASH_SIZE) != 0) {
+        fprintf(stderr, "Hash mismatch\n");
+    }
+
+    int count = request_length / PEER_ADDR_LEN;
+
+    for (int i = 0; i < count; i++) {
+        Address_t *peer = malloc(sizeof(Address_t));
+        
+        memcpy(peer, request_body + (i * PEER_ADDR_LEN), PEER_ADDR_LEN);
+
+        peer_count++;
+        network = realloc(network, peer_count * sizeof(Address_t*));
+        network[peer_count-1] = peer;
+    };
     
     return NULL;
 }

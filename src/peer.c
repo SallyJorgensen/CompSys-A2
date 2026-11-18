@@ -102,9 +102,9 @@ void send_message(Address_t peer_address, int command,
         
         memcpy(peer, reply_body + (i * PEER_ADDR_LEN), PEER_ADDR_LEN);
 
-
-        network[peer_count] = peer;
         peer_count++;
+        network = realloc(network, peer_count * sizeof(Address_t*));
+        network[peer_count-1] = peer;
     };
     
 
@@ -177,9 +177,12 @@ void* handle_server_request_thread(void *vargp)
 
     /*
     5: Reading Server Requests
-    Here we should probable actually read in some input data.
+    Here we should probably actually read in some input data.
     */
-
+    char request_header[REQUEST_HEADER_LEN];
+    char request_body[MAX_MSG_LEN];
+    compsys_helper_readnb()
+    
     return NULL;
 }
 
@@ -206,6 +209,17 @@ void* server_thread()
     connections. The function 'handle_server_request_thread' has been provided
     as a simple skeleton function you could use to process your requests in.
     */
+    int *connfd;
+    struct sockaddr_in clientaddr;
+    int lis_addr_len = sizeof(clientaddr);
+    pthread_t tid;
+
+    while(1) {
+        // Accept incoming connections
+        connfd = malloc(sizeof(int));
+        *connfd = accept(listenfd, (struct sockaddr*)&clientaddr, (socklen_t*)&lis_addr_len);
+        pthread_create(&tid, NULL, handle_server_request_thread, connfd);
+    }
 
     // You should never see this printed in your finished implementation
     printf("Server thread done\n");

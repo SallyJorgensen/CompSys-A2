@@ -173,7 +173,25 @@ void get_signature(char* password, int password_len, char* salt, hashdata_t* has
 }
 
 void send_response(uint32_t connfd, uint32_t status, char* response_body, int response_length) {
-    // to be added
+    char msg_buf[MAX_MSG_LEN];
+    hashdata_t body_hash;
+    get_data_sha(response_body, body_hash, response_length, SHA256_HASH_SIZE);
+
+    int32_t network_length = htonl(response_length);
+    uint32_t network_status = htonl(status);
+    uint32_t network_block_number = htonl(0);
+    uint32_t network_block_count = htonl(1);
+
+    memcpy(msg_buf + 0,  &network_length, 4);
+    memcpy(msg_buf + 4,  &network_status, 4);
+    memcpy(msg_buf + 8,  &network_block_number, 4);
+    memcpy(msg_buf + 12, &network_block_count, 4);
+    memcpy(msg_buf + 16, body_hash, SHA256_HASH_SIZE);
+    memcpy(msg_buf + 48, body_hash, SHA256_HASH_SIZE); 
+
+    memcpy(msg_buf + REPLY_HEADER_LEN, response_body, response_length);
+
+    compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + response_length);
 }
 
 void handle_register(int connfd, char* ip, uint32_t port, char* signature)
@@ -230,6 +248,8 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
         memcpy(p + 20, network[i]->signature, SHA256_HASH_SIZE); // Copy signature (32 bytes)
         memcpy(p + 52, network[i]->salt, SALT_LEN); // Copy salt (16 bytes)
     }
+
+    send_response(connfd, 1, list, list_length);
 }
 /*
  * Handler for all server requests. This will call the relevent function based 
@@ -270,7 +290,6 @@ void* handle_server_request_thread(void *vargp)
     printf("ip=%s port=%u command=%u length=%u\n",
        request_ip, request_port, request_command, request_length);
 
-    // reading body
     if (request_command == 1) {
         handle_register(connfd, request_ip, request_port, (char*)request.signature);
     }

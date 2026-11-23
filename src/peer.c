@@ -160,46 +160,57 @@ void* client_thread()
     return NULL;
 }
 
+void get_signature(char* password, int password_len, char* salt, hashdata_t* hash) {
+    char combined[password_len + SALT_LEN + 1];
+    
+
+    memcpy(combined, password, password_len);
+    memcpy(combined + password_len, salt, SALT_LEN); // + password_len to avoid it being overwritten
+
+    // combined[password_len + SALT_LEN] = '\0';
+
+    get_data_sha(combined, *hash, password_len + SALT_LEN, SHA256_HASH_SIZE);
+}
+
 void handle_register(int connfd, char* ip, uint32_t port, char* signature)
 {
-    if (!is_valid_ip(my_address->ip)) {
-        fprintf(stderr, ">> Invalid peer IP: %s\n", my_address->ip);
+    if (!is_valid_ip(ip)) {
+        fprintf(stderr, ">> Invalid peer IP: %s\n", ip);
         exit(EXIT_FAILURE);
     }
     
-    if (!is_valid_port(my_address->port)) {
+    if (!is_valid_port(port)) {
         fprintf(stderr, ">> Invalid peer port: %d\n", 
-            my_address->port);
+            port);
         exit(EXIT_FAILURE);
     }
 
-    if (!is_valid_port_str(my_address->port)) {
-        fprintf(stderr, ">> Invalid peer port string: %d\n", 
-            my_address->port);
-        exit(EXIT_FAILURE);
-    }
-
-    for (int i = 0; i < peer_count; i++) {
-        if (strcmp(my_address->port, network[i]->port)) {
+    for (uint32_t i = 0; i < peer_count; i++) {
+        if (strcmp(network[i]->ip, ip) == 0 && network[i]->port == port) {
             fprintf(stderr, "Peer already in network");
             exit(EXIT_FAILURE);
         }
     }
     
+    Address_t *peer = malloc(sizeof(Address_t));
+    memset(peer, 0, sizeof(Address_t));
+
     // Copy the IP and port
-    memcpy(peer->ip, request.ip, IP_LEN);
-    peer->port = ntohl(request.port);
+    memcpy(peer->ip, ip, strlen(ip));
+    peer->port = port;
 
     // Generate a random salt for the new peer
-    generate_random_salt(peer->salt);
+    char network_salt[SALT_LEN+1];
+    generate_random_salt(network_salt);
+    memcpy(peer->salt, network_salt, SALT_LEN);
 
     // Hash the received signature using the new salt
-    get_signature(
-    (char*)request.signature,
-    SHA256_HASH_SIZE,
-    peer->salt,
-    (hashdata_t*)&peer->signature
-);
+    get_signature(signature, SHA256_HASH_SIZE, peer->salt, (hashdata_t*)&peer->signature);
+
+    // Add to the network
+    peer_count++;
+    network = realloc(network, peer_count * sizeof(Address_t*));
+    network[peer_count-1] = peer;
 }
 /*
  * Handler for all server requests. This will call the relevent function based 
@@ -220,49 +231,30 @@ void* handle_server_request_thread(void *vargp)
     Here we should probably actually read in some input data.
     */
     char request_header[REQUEST_HEADER_LEN];
+    char request_body[MAX_MSG_LEN];
+    compsys_helper_readinitb(&state, connfd);
+
+    // reading header
     struct RequestHeader request;
     memcpy(&request, request_header, REQUEST_HEADER_LEN);
-    char request_body[MAX_MSG_LEN];
+
+    char request_ip[IP_LEN + 1];
+    memcpy(request_ip, request.ip, IP_LEN);
+    request_ip[IP_LEN] = '\0';
     
-    // reading header
     compsys_helper_readnb(&state, request_header, REQUEST_HEADER_LEN);
-    uint32_t request_length = ntohl(*(uint32_t*)&request_header[0]);
-    uint32_t request_status = ntohl(*(uint32_t*)&request_header[4]);
-    uint32_t block_number = ntohl(*(uint32_t*)&request_header[8]);
-    uint32_t block_count = ntohl(*(uint32_t*)&request_header[12]);
+    uint32_t request_port = ntohl(request.port);
+    uint32_t request_command = ntohl(request.command);
+    uint32_t request_length = ntohl(request.length);
 
-    hashdata_t block_hash;
-    memcpy(block_hash, &request_header[16], SHA256_HASH_SIZE);
-
-    hashdata_t total_hash;
-    memcpy(total_hash, &request_header[48], SHA256_HASH_SIZE);
-    
     // for testing
-    printf("length=%u status=%u block=%u count=%u\n",
-       request_length, request_status, block_number, block_count);
-
+    printf("ip=%s port=%u command=%u length=%u\n",
+       request_ip, request_port, request_command, request_length);
 
     // reading body
-    hashdata_t body_hash;
-    compsys_helper_readnb(&state, request_body, request_length);
-    get_data_sha(request_body, body_hash, request_length, SHA256_HASH_SIZE);
-
-    if (memcmp(body_hash, block_hash, SHA256_HASH_SIZE) != 0) {
-        fprintf(stderr, "Hash mismatch\n");
+    if (request_command == 1) {
+        handle_register(connfd, request_ip, request_port, (char*)request.signature);
     }
-
-    int count = request_length / PEER_ADDR_LEN;
-
-    for (int i = 0; i < count; i++) {
-        Address_t *peer = malloc(sizeof(Address_t));
-        
-        memcpy(peer, request_body + (i * PEER_ADDR_LEN), PEER_ADDR_LEN);
-
-        peer_count++;
-        network = realloc(network, peer_count * sizeof(Address_t*));
-        network[peer_count-1] = peer;
-    };
-    
 
     close(connfd);
 
@@ -308,19 +300,6 @@ void* server_thread()
     printf("Server thread done\n");
 
     return NULL;
-}
-
-void get_signature(char* password, int password_len, char* salt, hashdata_t* hash) {
-    char combined[password_len + SALT_LEN + 1];
-    
-
-    memcpy(combined, password, password_len);
-    memcpy(combined + password_len, salt, SALT_LEN); // + password_len to avoid it being overwritten
-
-    // combined[password_len + SALT_LEN] = '\0';
-
-    get_data_sha(combined, *hash, password_len + SALT_LEN, SHA256_HASH_SIZE);
-    Address_t *peer = malloc(sizeof(Address_t));
 }
 
 int main(int argc, char **argv)

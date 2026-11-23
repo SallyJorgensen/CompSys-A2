@@ -176,19 +176,19 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
 {
     if (!is_valid_ip(ip)) {
         fprintf(stderr, ">> Invalid peer IP: %s\n", ip);
-        exit(EXIT_FAILURE);
+        return;
     }
     
     if (!is_valid_port(port)) {
         fprintf(stderr, ">> Invalid peer port: %d\n", 
             port);
-        exit(EXIT_FAILURE);
+        return;
     }
 
     for (uint32_t i = 0; i < peer_count; i++) {
         if (strcmp(network[i]->ip, ip) == 0 && network[i]->port == port) {
             fprintf(stderr, "Peer already in network");
-            exit(EXIT_FAILURE);
+            return;
         }
     }
     
@@ -233,6 +233,7 @@ void* handle_server_request_thread(void *vargp)
     char request_header[REQUEST_HEADER_LEN];
     char request_body[MAX_MSG_LEN];
     compsys_helper_readinitb(&state, connfd);
+    compsys_helper_readnb(&state, request_header, REQUEST_HEADER_LEN);
 
     // reading header
     struct RequestHeader request;
@@ -242,7 +243,6 @@ void* handle_server_request_thread(void *vargp)
     memcpy(request_ip, request.ip, IP_LEN);
     request_ip[IP_LEN] = '\0';
     
-    compsys_helper_readnb(&state, request_header, REQUEST_HEADER_LEN);
     uint32_t request_port = ntohl(request.port);
     uint32_t request_command = ntohl(request.command);
     uint32_t request_length = ntohl(request.length);

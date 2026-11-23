@@ -160,6 +160,47 @@ void* client_thread()
     return NULL;
 }
 
+void handle_register(int connfd, char* ip, uint32_t port, char* signature)
+{
+    if (!is_valid_ip(my_address->ip)) {
+        fprintf(stderr, ">> Invalid peer IP: %s\n", my_address->ip);
+        exit(EXIT_FAILURE);
+    }
+    
+    if (!is_valid_port(my_address->port)) {
+        fprintf(stderr, ">> Invalid peer port: %d\n", 
+            my_address->port);
+        exit(EXIT_FAILURE);
+    }
+
+    if (!is_valid_port_str(my_address->port)) {
+        fprintf(stderr, ">> Invalid peer port string: %d\n", 
+            my_address->port);
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < peer_count; i++) {
+        if (strcmp(my_address->port, network[i]->port)) {
+            fprintf(stderr, "Peer already in network");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    // Copy the IP and port
+    memcpy(peer->ip, request.ip, IP_LEN);
+    peer->port = ntohl(request.port);
+
+    // Generate a random salt for the new peer
+    generate_random_salt(peer->salt);
+
+    // Hash the received signature using the new salt
+    get_signature(
+    (char*)request.signature,
+    SHA256_HASH_SIZE,
+    peer->salt,
+    (hashdata_t*)&peer->signature
+);
+}
 /*
  * Handler for all server requests. This will call the relevent function based 
  * on the parsed command code
@@ -173,13 +214,14 @@ void* handle_server_request_thread(void *vargp)
     pthread_detach(pthread_self()); 
     free(vargp);
 
-    close(connfd);
-
+    
     /*
     5: Reading Server Requests
     Here we should probably actually read in some input data.
     */
     char request_header[REQUEST_HEADER_LEN];
+    struct RequestHeader request;
+    memcpy(&request, request_header, REQUEST_HEADER_LEN);
     char request_body[MAX_MSG_LEN];
     
     // reading header
@@ -221,6 +263,9 @@ void* handle_server_request_thread(void *vargp)
         network[peer_count-1] = peer;
     };
     
+
+    close(connfd);
+
     return NULL;
 }
 
@@ -267,6 +312,7 @@ void* server_thread()
 
 void get_signature(char* password, int password_len, char* salt, hashdata_t* hash) {
     char combined[password_len + SALT_LEN + 1];
+    
 
     memcpy(combined, password, password_len);
     memcpy(combined + password_len, salt, SALT_LEN); // + password_len to avoid it being overwritten
@@ -274,6 +320,7 @@ void get_signature(char* password, int password_len, char* salt, hashdata_t* has
     // combined[password_len + SALT_LEN] = '\0';
 
     get_data_sha(combined, *hash, password_len + SALT_LEN, SHA256_HASH_SIZE);
+    Address_t *peer = malloc(sizeof(Address_t));
 }
 
 int main(int argc, char **argv)

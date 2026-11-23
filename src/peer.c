@@ -172,6 +172,10 @@ void get_signature(char* password, int password_len, char* salt, hashdata_t* has
     get_data_sha(combined, *hash, password_len + SALT_LEN, SHA256_HASH_SIZE);
 }
 
+void send_response(uint32_t connfd, uint32_t status, char* response_body, int response_length) {
+    // to be added
+}
+
 void handle_register(int connfd, char* ip, uint32_t port, char* signature)
 {
     if (!is_valid_ip(ip)) {
@@ -211,6 +215,21 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
     peer_count++;
     network = realloc(network, peer_count * sizeof(Address_t*));
     network[peer_count-1] = peer;
+
+    // step 7
+    int list_length = peer_count * PEER_ADDR_LEN;
+    char list[list_length];
+    for (uint32_t i = 0; i < peer_count; i++) {
+        char* p = list + i * PEER_ADDR_LEN;
+
+        memcpy(p + 0, network[i]->ip, IP_LEN); // Copy IP (16 bytes)
+
+        uint32_t net_port = htonl(network[i]->port);
+        memcpy(p + 16, &net_port, 4); // Copy port (4 bytes)
+
+        memcpy(p + 20, network[i]->signature, SHA256_HASH_SIZE); // Copy signature (32 bytes)
+        memcpy(p + 52, network[i]->salt, SALT_LEN); // Copy salt (16 bytes)
+    }
 }
 /*
  * Handler for all server requests. This will call the relevent function based 

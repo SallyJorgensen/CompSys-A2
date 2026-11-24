@@ -58,6 +58,11 @@ void send_message(Address_t peer_address, int command,
     memcpy(msg_buf+REQUEST_HEADER_LEN, request_body, body_length);
     compsys_helper_writen(peer_socket, msg_buf, REQUEST_HEADER_LEN+body_length);
 
+    if (command == 3) {
+        close(peer_socket);
+        return;
+    }
+
     /*
     3: Handing the response to the register message
     Rather than closing immediately we should probably handle a response.
@@ -250,6 +255,24 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
     }
 
     send_response(connfd, 1, list, list_length);
+
+    // Step 8: Inform other peers
+    char inform_body[PEER_ADDR_LEN];
+
+    memcpy(inform_body, list + (peer_count - 1) * PEER_ADDR_LEN, PEER_ADDR_LEN);
+
+    char zeros[SHA256_HASH_SIZE];
+    memset(zeros, 0, SHA256_HASH_SIZE);
+
+    for (uint32_t i = 0; i < peer_count; i++) {
+        if (network[i] == my_address || network[i] == peer) {
+            continue;
+        }
+        if (memcmp(network[i]->signature, zeros,SHA256_HASH_SIZE) == 0) {
+            continue;
+        }
+        send_message(*network[i], 3, inform_body, PEER_ADDR_LEN);
+    }
 }
 /*
  * Handler for all server requests. This will call the relevent function based 

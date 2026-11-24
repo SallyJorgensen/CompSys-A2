@@ -90,7 +90,12 @@ void send_message(Address_t peer_address, int command,
     printf("length=%u status=%u block=%u count=%u\n",
        reply_length, reply_status, block_number, block_count);
 
-
+    if (reply_length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
+        fprintf(stderr, "Reply too long: %u\n", reply_length);
+        close(peer_socket);
+        return;
+    }
+    
     // reading body
     hashdata_t body_hash;
     compsys_helper_readnb(&state, reply_body, reply_length);
@@ -98,6 +103,14 @@ void send_message(Address_t peer_address, int command,
 
     if (memcmp(body_hash, block_hash, SHA256_HASH_SIZE) != 0) {
         fprintf(stderr, "Hash mismatch\n");
+        close(peer_socket);
+        return;
+    }
+
+    if (reply_status != STATUS_OK) {
+        printf("Got status %u: %.*s\n", reply_status, reply_length, reply_body);
+        close(peer_socket);
+        return;
     }
 
     int count = reply_length / PEER_ADDR_LEN;
@@ -106,6 +119,7 @@ void send_message(Address_t peer_address, int command,
         Address_t *peer = malloc(sizeof(Address_t));
         
         memcpy(peer, reply_body + (i * PEER_ADDR_LEN), PEER_ADDR_LEN);
+        peer->port = ntohl(peer->port);
 
         peer_count++;
         network = realloc(network, peer_count * sizeof(Address_t*));

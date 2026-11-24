@@ -213,6 +213,19 @@ void send_response(uint32_t connfd, uint32_t status, char* response_body, int re
     compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + response_length);
 }
 
+void handle_inform(char* body, uint32_t length)
+{
+    if (length != PEER_ADDR_LEN) {
+        fprintf(stderr, "Malformed inform\n");
+        return;
+    }
+
+    Address_t* peer = malloc(sizeof(Address_t));
+
+    memcpy(peer, body, PEER_ADDR_LEN);
+    peer->port = ntohl(peer->port);
+}
+
 void handle_register(int connfd, char* ip, uint32_t port, char* signature)
 {
     if (!is_valid_ip(ip)) {
@@ -326,9 +339,21 @@ void* handle_server_request_thread(void *vargp)
     // for testing
     printf("ip=%s port=%u command=%u length=%u\n",
        request_ip, request_port, request_command, request_length);
+    
+    // step 9: handling inform message
+    if (request_length > MAX_MSG_LEN - REQUEST_HEADER_LEN) {
+        fprintf(stderr, "Request too long\n");
+        close(connfd);
+        return NULL;
+    }
+    if (request_length > 0) {
+        compsys_helper_readnb(&state, request_body, request_length);
+    }
 
-    if (request_command == 1) {
+    if (request_command == COMMAND_REGISTER) {
         handle_register(connfd, request_ip, request_port, (char*)request.signature);
+    } else if (request_command == COMMAND_INFORM) {
+        handle_inform(request_body, request_length);
     }
 
     close(connfd);

@@ -91,40 +91,105 @@ void send_message(Address_t peer_address, int command,
     */
 
     char reply_header[REPLY_HEADER_LEN];
-    char reply_body[MAX_MSG_LEN];
+
+    uint32_t reply_status = 0;
+    uint32_t block_count = 0;
+    hashdata_t total_hash;
+    char** blocks = NULL;
+    uint32_t* block_lengths = NULL;
+    uint32_t blocks_received = 0;
     
+
     // reading header
-    compsys_helper_readnb(&state, reply_header, REPLY_HEADER_LEN);
-    uint32_t reply_length = ntohl(*(uint32_t*)&reply_header[0]);
-    uint32_t reply_status = ntohl(*(uint32_t*)&reply_header[4]);
-    uint32_t block_number = ntohl(*(uint32_t*)&reply_header[8]);
-    uint32_t block_count = ntohl(*(uint32_t*)&reply_header[12]);
+    do {
+    if (compsys_helper_readnb(&state, reply_header, REPLY_HEADER_LEN) != REPLY_HEADER_LEN) {
+        fprintf(stderr, "Failed to read reply header\n");
+        close(peer_socket);
+        return;
+    }
+    uint32_t length = ntohl(*(uint32_t*)&reply_header[0]);
+    uint32_t status = ntohl(*(uint32_t*)&reply_header[4]);
+    uint32_t number = ntohl(*(uint32_t*)&reply_header[8]);
+    uint32_t count = ntohl(*(uint32_t*)&reply_header[12]);
 
     hashdata_t block_hash;
     // bruger memcpy fordi uint32_t kun grapper 4 bytes (tror jeg)
     // SHA256_HASH_SIZE er vidst 32 bytes som er det vi har brug for
     memcpy(block_hash, &reply_header[16], SHA256_HASH_SIZE);
 
-    hashdata_t total_hash;
-    memcpy(total_hash, &reply_header[48], SHA256_HASH_SIZE);
-    
+    hashdata_t this_total_hash;
+    memcpy(this_total_hash, &reply_header[48], SHA256_HASH_SIZE);
+
     // for testing
     printf("length=%u status=%u block=%u count=%u\n",
-       reply_length, reply_status, block_number, block_count);
+       length, status, number, count);
 
-    if (reply_length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
-        fprintf(stderr, "Reply too long: %u\n", reply_length);
+    if (length > MAX_MSG_LEN - REPLY_HEADER_LEN || count == 0 || number >= count) {
+        fprintf(stderr, "Header is invalid\n");
         close(peer_socket);
         return;
     }
-    
-    // reading body
-    hashdata_t body_hash;
-    compsys_helper_readnb(&state, reply_body, reply_length);
-    get_data_sha(reply_body, body_hash, reply_length, SHA256_HASH_SIZE);
 
+    if (blocks == NULL) {
+        reply_status = status;
+            block_count = count;
+            memcpy(total_hash, this_total_hash, SHA256_HASH_SIZE);
+            blocks = calloc(block_count, sizeof(char*));
+            block_lengths = calloc(block_count, sizeof(uint32_t));
+        } else if (status != reply_status || count != block_count ||
+                memcmp(this_total_hash, total_hash, SHA256_HASH_SIZE) != 0) {
+        fprintf(stderr, "Status, count or total hash differ\n");
+        close(peer_socket);
+        return;
+    }
+
+    if (blocks[number] != NULL) {
+            fprintf(stderr, "Duplicate block %u\n", number);
+            close(peer_socket);
+            return;
+    }
+
+    // reading body
+    char* block = malloc(length > 0 ? length : 1);
+    if (length > 0 && compsys_helper_readnb(&state, block, length) != length) {
+        fprintf(stderr, "Failed to read block body\n");
+        free(block);
+        close(peer_socket);
+        return;
+    }
+
+    hashdata_t body_hash;
+    get_data_sha(block, body_hash, length, SHA256_HASH_SIZE);
     if (memcmp(body_hash, block_hash, SHA256_HASH_SIZE) != 0) {
-        fprintf(stderr, "Hash mismatch\n");
+        fprintf(stderr, "Block hash mismatch\n");
+        free(block);
+        close(peer_socket);
+        return;
+    }
+
+    blocks[number] = block;
+        block_lengths[number] = length;
+        blocks_received++;
+    } while (blocks_received < block_count);
+
+        uint32_t reply_length = 0;
+    for (uint32_t i = 0; i < block_count; i++) reply_length += block_lengths[i];
+
+    char* reply_body = malloc(reply_length > 0 ? reply_length : 1);
+    uint32_t position = 0;
+    for (uint32_t i = 0; i < block_count; i++) {
+        memcpy(reply_body + position, blocks[i], block_lengths[i]);
+        position += block_lengths[i];
+        free(blocks[i]);
+    }
+    free(blocks);
+    free(block_lengths);
+
+    hashdata_t computed_total;
+    get_data_sha(reply_body, computed_total, reply_length, SHA256_HASH_SIZE);
+    if (memcmp(computed_total, total_hash, SHA256_HASH_SIZE) != 0) {
+        fprintf(stderr, "Total hash mismatch\n");
+        free(reply_body);
         close(peer_socket);
         return;
     }
@@ -142,6 +207,7 @@ void send_message(Address_t peer_address, int command,
         fp = fopen(filename, "wb");
         if (fp == NULL) {
             fprintf(stderr, "Could not create file %s\n", filename);
+            free(reply_body);
             close(peer_socket);
             return;
         }
@@ -149,6 +215,7 @@ void send_message(Address_t peer_address, int command,
         fclose(fp);
         printf("Saved %s (%u bytes)\n", filename, reply_length);
 
+        free(reply_body);
         close(peer_socket);
         return;
     }
@@ -167,8 +234,8 @@ void send_message(Address_t peer_address, int command,
             free(peer);
         }
     };
-    
 
+    free(reply_body);
     close(peer_socket);
 }
 
@@ -440,13 +507,6 @@ void handle_retrieve(int connfd, char* body, uint32_t length)
     fseek(fp, 0L, SEEK_END);
     int file_size = ftell(fp);
     fseek(fp, 0L, SEEK_SET); // it makes fseek jump back up to the top for the future
-
-    // step 5.1: temporary fix for large files. remove when we implement ability to send large files
-    if (file_size > MAX_MSG_LEN - REPLY_HEADER_LEN) {
-        fclose(fp);
-        send_error(connfd, STATUS_BAD_REQUEST, "File too large");
-        return;
-    }
 
     // step 6: reading and sending
     char* data = malloc(file_size > 0 ? file_size : 1);   // at least 1 byte, so an empty file also works

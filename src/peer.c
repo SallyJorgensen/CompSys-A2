@@ -195,11 +195,36 @@ void* client_thread()
     send_message function.
     */
     send_message(peer_address, 1, NULL, 0);
-    // You should never see this printed in your finished implementation
-    printf("Client thread done\n");
+    
+    while (1) {
+    char filename[256];
+
+    printf("Enter filename to retrieve: ");
+    scanf("%255s", filename);
+
+    // Select peer and send request
+
+    pthread_mutex_lock(&network_mutex);
+
+    if (peer_count == 0) {
+        pthread_mutex_unlock(&network_mutex);
+        printf("No peers available\n");
+        continue;
+    }
+
+    int index = rand() % peer_count;
+    Address_t random_peer = *network[index];
+
+    pthread_mutex_unlock(&network_mutex);
+
+    send_message(random_peer, 2, filename, strlen(filename));
+}
+// You should never see this printed in your finished implementation
+printf("Client thread done\n");
 
     return NULL;
 }
+
 
 void get_signature(char* password, int password_len, char* salt, hashdata_t* hash) {
     char combined[password_len + SALT_LEN + 1];
@@ -233,6 +258,13 @@ void send_response(uint32_t connfd, uint32_t status, char* response_body, int re
     memcpy(msg_buf + REPLY_HEADER_LEN, response_body, response_length);
 
     compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + response_length);
+}
+
+void send_error(int connfd, uint32_t status, char* message) {
+    fprintf(stderr, "Error %u: %s\n", status, message);
+
+    // Sender en fejlbesked til klienten
+    send_response(connfd, status, message, strlen(message));
 }
 
 void handle_inform(char* body, uint32_t length)

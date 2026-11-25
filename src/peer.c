@@ -21,6 +21,28 @@ Address_t *my_address;
 
 Address_t** network = NULL;
 uint32_t peer_count = 0;
+pthread_mutex_t network_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+
+// helper function that returns 1 if it has added a peer and 0 if it hasn't
+int add_peer_if_new(Address_t* peer)
+{
+    pthread_mutex_lock(&network_mutex);
+
+    for (uint32_t i = 0; i < peer_count; i++) { // check if anyone has the same ip + port. if so return 0
+        if (strncmp(network[i]->ip, peer->ip, IP_LEN) == 0 && network[i]->port == peer->port) {
+            pthread_mutex_unlock(&network_mutex);
+            return 0;
+        }
+    }
+
+    network = realloc(network, (peer_count + 1) * sizeof(Address_t*));
+    network[peer_count] = peer;
+    peer_count++;
+
+    pthread_mutex_unlock(&network_mutex);
+    return 1;
+}
 
 /*
  * Send a request message to another peer on the network. Unless this is 
@@ -121,9 +143,9 @@ void send_message(Address_t peer_address, int command,
         memcpy(peer, reply_body + (i * PEER_ADDR_LEN), PEER_ADDR_LEN);
         peer->port = ntohl(peer->port);
 
-        peer_count++;
-        network = realloc(network, peer_count * sizeof(Address_t*));
-        network[peer_count-1] = peer;
+        if (!add_peer_if_new(peer)) {
+            free(peer);
+        }
     };
     
 
@@ -224,6 +246,10 @@ void handle_inform(char* body, uint32_t length)
 
     memcpy(peer, body, PEER_ADDR_LEN);
     peer->port = ntohl(peer->port);
+
+    if (!add_peer_if_new(peer)) {
+        free(peer);
+    }
 }
 
 void handle_register(int connfd, char* ip, uint32_t port, char* signature)
@@ -237,13 +263,6 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
         fprintf(stderr, ">> Invalid peer port: %d\n", 
             port);
         return;
-    }
-
-    for (uint32_t i = 0; i < peer_count; i++) {
-        if (strcmp(network[i]->ip, ip) == 0 && network[i]->port == port) {
-            fprintf(stderr, "Peer already in network");
-            return;
-        }
     }
     
     Address_t *peer = malloc(sizeof(Address_t));
@@ -260,6 +279,18 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
 
     // Hash the received signature using the new salt
     get_signature(signature, SHA256_HASH_SIZE, peer->salt, (hashdata_t*)&peer->signature);
+
+    pthread_mutex_lock(&network_mutex);
+
+    for (uint32_t i = 0; i < peer_count; i++) {
+        if (strncmp(network[i]->ip, ip, IP_LEN) == 0 && network[i]->port == port) {
+            pthread_mutex_unlock(&network_mutex);
+            free(peer);
+            char* msg = "Peer already in network";
+            send_response(connfd, STATUS_PEER_EXISTS, msg, strlen(msg));
+            return;
+        }
+    }
 
     // Add to the network
     peer_count++;
@@ -281,24 +312,25 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
         memcpy(p + 52, network[i]->salt, SALT_LEN); // Copy salt (16 bytes)
     }
 
-    send_response(connfd, 1, list, list_length);
-
     // Step 8: Inform other peers
     char inform_body[PEER_ADDR_LEN];
 
     memcpy(inform_body, list + (peer_count - 1) * PEER_ADDR_LEN, PEER_ADDR_LEN);
 
-    char zeros[SHA256_HASH_SIZE];
-    memset(zeros, 0, SHA256_HASH_SIZE);
-
+    Address_t recipients[peer_count];
+    int n_recipients = 0;
     for (uint32_t i = 0; i < peer_count; i++) {
-        if (network[i] == my_address || network[i] == peer) {
-            continue;
+        if (network[i] != my_address && network[i] != peer) {
+            recipients[n_recipients++] = *network[i];
         }
-        if (memcmp(network[i]->signature, zeros,SHA256_HASH_SIZE) == 0) {
-            continue;
-        }
-        send_message(*network[i], 3, inform_body, PEER_ADDR_LEN);
+    }
+
+    pthread_mutex_unlock(&network_mutex);
+
+    // now without the lock
+    send_response(connfd, STATUS_OK, list, list_length);
+    for (int i = 0; i < n_recipients; i++) {
+        send_message(recipients[i], COMMAND_INFORM, inform_body, PEER_ADDR_LEN);
     }
 }
 /*

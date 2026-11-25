@@ -135,6 +135,24 @@ void send_message(Address_t peer_address, int command,
         return;
     }
 
+    if (command == COMMAND_RETREIVE) {
+        char filename[PATH_LEN];
+        snprintf(filename, sizeof(filename), "%.*s", body_length, request_body);
+
+        fp = fopen(filename, "wb");
+        if (fp == NULL) {
+            fprintf(stderr, "Could not create file %s\n", filename);
+            close(peer_socket);
+            return;
+        }
+        fwrite(reply_body, 1, reply_length, fp);
+        fclose(fp);
+        printf("Saved %s (%u bytes)\n", filename, reply_length);
+
+        close(peer_socket);
+        return;
+    }
+
     int count = reply_length / PEER_ADDR_LEN;
 
     for (int i = 0; i < count; i++) {

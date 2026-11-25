@@ -224,13 +224,13 @@ void* client_thread()
 
     pthread_mutex_lock(&network_mutex);
 
-    if (peer_count == 0) {
+    if (peer_count <= 1) {
         pthread_mutex_unlock(&network_mutex);
         printf("No peers available\n");
         continue;
     }
 
-    int index = rand() % peer_count;
+    int index = 1 + rand() % (peer_count -1);
     Address_t random_peer = *network[index];
 
     pthread_mutex_unlock(&network_mutex);

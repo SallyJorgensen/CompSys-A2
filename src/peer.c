@@ -285,23 +285,6 @@ void send_error(int connfd, uint32_t status, char* message) {
     send_response(connfd, status, message, strlen(message));
 }
 
-void handle_inform(char* body, uint32_t length)
-{
-    if (length != PEER_ADDR_LEN) {
-        fprintf(stderr, "Malformed inform\n");
-        return;
-    }
-
-    Address_t* peer = malloc(sizeof(Address_t));
-
-    memcpy(peer, body, PEER_ADDR_LEN);
-    peer->port = ntohl(peer->port);
-
-    if (!add_peer_if_new(peer)) {
-        free(peer);
-    }
-}
-
 void handle_register(int connfd, char* ip, uint32_t port, char* signature)
 {
     if (!is_valid_ip(ip)) {
@@ -383,6 +366,74 @@ void handle_register(int connfd, char* ip, uint32_t port, char* signature)
         send_message(recipients[i], COMMAND_INFORM, inform_body, PEER_ADDR_LEN);
     }
 }
+
+void handle_inform(char* body, uint32_t length)
+{
+    if (length != PEER_ADDR_LEN) {
+        fprintf(stderr, "Malformed inform\n");
+        return;
+    }
+
+    Address_t* peer = malloc(sizeof(Address_t));
+
+    memcpy(peer, body, PEER_ADDR_LEN);
+    peer->port = ntohl(peer->port);
+
+    if (!add_peer_if_new(peer)) {
+        free(peer);
+    }
+}
+
+void handle_retrieve(int connfd, char* body, uint32_t length)
+{
+    // step 1: validate the length
+    if (length == 0 || length >= PATH_LEN) {
+        send_error(connfd, STATUS_MALFORMED, "Wrong filename length");
+        return;
+    }
+    // step 2: makeing the filename a proper string
+    char filename[PATH_LEN];
+    memcpy(filename, body, length);
+    filename[length] = '\0';
+
+    // step 3: make sure you can't reach outside the folder by removing any leading / characters
+    while (filename[0] == '/') {
+        memmove(filename, filename + 1, strlen(filename));
+    }
+    // step 3.1: also block .. for more security
+    if (strstr(filename, "..") != NULL) {
+        send_error(connfd, STATUS_BAD_REQUEST, "Path not allowed");
+        return;
+    }
+
+    // step 4: open the file (rb is read binary)
+    FILE* fp = fopen(filename, "rb");
+    if (fp == NULL) {
+        send_error(connfd, STATUS_BAD_REQUEST, "File not found");
+        return;
+    }
+
+    // step 5:
+    fseek(fp, 0L, SEEK_END);
+    int file_size = ftell(fp);
+    fseek(fp, 0L, SEEK_SET); // it makes fseek jump back up to the top for the future
+
+    // step 5.1: temporary fix for large files. remove when we implement ability to send large files
+    if (file_size > MAX_MSG_LEN - REPLY_HEADER_LEN) {
+        fclose(fp);
+        send_error(connfd, STATUS_BAD_REQUEST, "File too large");
+        return;
+    }
+
+    // step 6: reading and sending
+    char* data = malloc(file_size > 0 ? file_size : 1);   // at least 1 byte, so an empty file also works
+    fread(data, 1, file_size, fp);
+    fclose(fp);
+
+    send_response(connfd, STATUS_OK, data, file_size);
+    free(data);
+}
+
 /*
  * Handler for all server requests. This will call the relevent function based 
  * on the parsed command code
@@ -436,6 +487,10 @@ void* handle_server_request_thread(void *vargp)
         handle_register(connfd, request_ip, request_port, (char*)request.signature);
     } else if (request_command == COMMAND_INFORM) {
         handle_inform(request_body, request_length);
+    } else if (request_command == COMMAND_RETREIVE) {
+        handle_retrieve(connfd, request_body, request_length);
+    } else {
+        send_error(connfd, STATUS_MALFORMED, "Unknown command");
     }
 
     close(connfd);

@@ -155,6 +155,8 @@ void send_message(Address_t peer_address, int command,
 
     int count = reply_length / PEER_ADDR_LEN;
 
+    printf("Received %d peers\n", count); // NEW
+
     for (int i = 0; i < count; i++) {
         Address_t *peer = malloc(sizeof(Address_t));
         
@@ -261,21 +263,42 @@ void send_response(uint32_t connfd, uint32_t status, char* response_body, int re
     hashdata_t body_hash;
     get_data_sha(response_body, body_hash, response_length, SHA256_HASH_SIZE);
 
-    int32_t network_length = htonl(response_length);
-    uint32_t network_status = htonl(status);
-    uint32_t network_block_number = htonl(0);
-    uint32_t network_block_count = htonl(1);
+    // NEW: Calculate the number of blocks
+    int max_payload = MAX_MSG_LEN - REPLY_HEADER_LEN;
+    int block_count = (response_length + max_payload - 1) / max_payload;
 
-    memcpy(msg_buf + 0,  &network_length, 4);
-    memcpy(msg_buf + 4,  &network_status, 4);
-    memcpy(msg_buf + 8,  &network_block_number, 4);
-    memcpy(msg_buf + 12, &network_block_count, 4);
-    memcpy(msg_buf + 16, body_hash, SHA256_HASH_SIZE);
-    memcpy(msg_buf + 48, body_hash, SHA256_HASH_SIZE); 
+    if (block_count == 0) {
+        block_count = 1;
+    }
 
-    memcpy(msg_buf + REPLY_HEADER_LEN, response_body, response_length);
+    for (int i = 0; i < block_count; i++) {
 
-    compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + response_length);
+        int offset = i * max_payload;
+        int block_length = response_length - offset;
+
+        if (block_length > max_payload) {
+            block_length = max_payload;
+        }
+
+        hashdata_t block_hash;
+        get_data_sha(response_body + offset, block_hash, block_length, SHA256_HASH_SIZE);
+
+        int32_t network_length = htonl(block_length);       
+        uint32_t network_status = htonl(status);
+        uint32_t network_block_number = htonl(i);            
+        uint32_t network_block_count = htonl(block_count);   
+
+        memcpy(msg_buf + 0,  &network_length, 4);
+        memcpy(msg_buf + 4,  &network_status, 4);
+        memcpy(msg_buf + 8,  &network_block_number, 4);
+        memcpy(msg_buf + 12, &network_block_count, 4);
+        memcpy(msg_buf + 16, block_hash, SHA256_HASH_SIZE);   
+        memcpy(msg_buf + 48, body_hash, SHA256_HASH_SIZE);
+
+        memcpy(msg_buf + REPLY_HEADER_LEN, response_body + offset, block_length); 
+
+        compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + block_length); 
+    }
 }
 
 void send_error(int connfd, uint32_t status, char* message) {
